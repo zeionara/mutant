@@ -2,7 +2,7 @@ from os import environ as env
 
 env['TF_CPP_MIN_LOG_LEVEL'] = '3'  # disable verbose logging from tensorflow
 
-from click import group, argument
+from click import group, argument, option
 from transformers import pipeline
 
 
@@ -16,7 +16,9 @@ def main():
 
 @main.command()
 @argument('text', type = str)
-def run(text: str):
+@option('--model', '-m', type = str, required = False)
+@option('--max-length', '-l', type = int, required = False)
+def run(text: str, model: str, max_length: int):
     # 1. Sentiment classification
 
     # classifier = pipeline('sentiment-analysis', token = TOKEN)
@@ -31,8 +33,28 @@ def run(text: str):
 
     # 2. Text generation
 
+    # print(
+    #     pipeline(
+    #         task = 'text-generation',
+    #         # model = 'mistralai/Mistral-7B-v0.1'
+    #         model = model
+    #     )(
+    #         text,
+    #         max_length = max_length
+    #     )
+    # )
+
+    # 3. Mask filling
+
     print(
-        pipeline('text-generation')(text)
+        '\n'.join([
+            item['sequence'] for item in pipeline(
+                task = 'fill-mask'
+            )(
+                text,
+                top_k = 5
+            )
+        ])
     )
 
 
