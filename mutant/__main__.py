@@ -29,7 +29,11 @@ def run(text: str):
 
     # print(result)
 
-    print(text)
+    # 2. Text generation
+
+    print(
+        pipeline('text-generation')(text)
+    )
 
 
 if __name__ == '__main__':
