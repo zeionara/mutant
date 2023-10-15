@@ -7,7 +7,8 @@ env['TF_CPP_MIN_LOG_LEVEL'] = '3'  # disable verbose logging from tensorflow
 import tensorflow as tf
 
 from click import group, argument, option
-from transformers import pipeline, TFGPT2LMHeadModel, AutoTokenizer, DataCollatorForLanguageModeling, AutoConfig
+from transformers import pipeline, TFGPT2LMHeadModel, AutoTokenizer, DataCollatorForLanguageModeling, AutoConfig, create_optimizer
+from transformers.keras_callbacks import PushToHubCallback
 from datasets import load_dataset
 
 
@@ -45,106 +46,56 @@ def fine_tune(model: str, max_length: int, batch_size: int, seed: int):
 
     # Prepare dataset
 
-    if not os.path.isfile(dataset_cache_path):
+    if not os.path.isdir(dataset_cache_path):
 
         dataset = load_dataset('zeio/baneks')['train']  # .select(range(10))
 
         dataset = dataset.shuffle(seed = seed)
 
         def tokenize(item):
-            # print(item)
-            # return tokenizer(item['text'], return_tensors='tf', max_length = 1024, truncation = True, padding = True)
             outputs = tokenizer(
                 item['text'],
-                # return_tensors='tf',
                 max_length = max_length,
                 return_overflowing_tokens = True,
-                # return_length = True,
-                # padding = True,
                 truncation = True
             )
 
-            # print(outputs['length'])
-
             return {'input_ids': outputs.input_ids}
-            # return outputs
-
-            # print(tokenizer.decode(outputs.input_ids[-1]))
-
-            # print(outputs['overflow_to_sample_mapping'])
-
-            # return outputs
-
-        # dataset.add_column('tokens', tokens)
-
-        # tokens = dataset.map(tokenize, batched = True)
-
-        # outputs = tokenizer(
-        #     dataset[1]['text'],
-        #     truncation = True,
-        #     # return_tensors='tf',
-        #     max_length = 100,
-        #     return_overflowing_tokens = True,
-        #     return_length = True
-        # )
-
-        # print(outputs['length'])
 
         tokens = dataset.map(tokenize, batched = True, batch_size = batch_size, remove_columns = dataset.column_names)
 
-        # model(model.dummy_inputs)
-        # model.summary()
-
         data_collator = DataCollatorForLanguageModeling(tokenizer, mlm = False, return_tensors = 'tf')
 
-        # batch = data_collator([tokens[i] for i in range(5)])
-        # for key in batch:
-        #     print(f'{key} shape: {batch[key].shape}')
-
-        tf_train_dataset = model.prepare_tf_dataset(
+        tf_dataset = model.prepare_tf_dataset(
             tokens,
             collate_fn = data_collator,
             shuffle = True,
             batch_size = batch_size
         )
 
-        tf_train_dataset.save(dataset_cache_path)
-
-        # with open(dataset_cache_path, 'wb') as file:
-        #     pickle.dump(tf_train_dataset, file)
+        tf_dataset.save(dataset_cache_path)
 
     else:
-        tf_train_dataset = tf.data.Dataset.load(dataset_cache_path)
+        tf_dataset = tf.data.Dataset.load(dataset_cache_path)
 
-        # with open(dataset_cache_path, 'rb') as file:
-        #     tf_train_dataset = pickle.load(file)
+    print(tf_dataset)
 
-    print(tf_train_dataset)
+    n_steps = len(tf_dataset)
+    optimizer, _ = create_optimizer(
+        init_lr = 5e-5,
+        num_warmup_steps = 1_000,
+        num_train_steps = n_steps,
+        weight_decay_rate = 0.01
+    )
+    model.compile(optimizer = optimizer)
 
-    # model_size = sum(t.numel() for t in model.parameters())
-    # print(f'Model size: {model.num_parameters()/1000**2:.1f}M parameters')
+    tf.keras.mixed_precision.set_global_policy('mixed_float16')
 
-    # model = TFGPT2LMHeadModel.from_pretrained(model)
+    print(f'Ready to train for {n_steps} steps')
 
-    # text = 'huggingface is the'
+    callback = PushToHubCallback(output_dir = 'fool', tokenizer = tokenizer)
 
-    # inputs = tokenizer(text, return_tensors = 'tf')
-    # outputs = model(**inputs)
-
-    # logits = outputs.logits[0, -1, :]
-    # # print(outputs.logits.shape)
-    # # argmax = tf.argmax(outputs.logits, axis = -1).numpy().tolist()[0]
-
-    # # print(argmax)
-
-    # # softmax = tf.math.softmax(logits, axis=-1)
-    # argmax = tf.math.argmax(logits, axis=-1)
-
-    # print(argmax)
-
-    # print(text, "[", tokenizer.decode(argmax), "]")
-
-    # # print(tokenizer.decode(outputs))
+    model.fit(tf_dataset, callbacks = [callback])
 
 
 @main.command()
