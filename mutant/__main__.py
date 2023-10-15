@@ -25,8 +25,11 @@ def main():
 @option('--max-length', '-l', type = int, default = 1024)
 @option('--batch-size', '-b', type = int, default = 128)
 @option('--seed', '-s', type = int, default = 17)
-def fine_tune(model: str, max_length: int, batch_size: int, seed: int):
+@option('--epochs', '-e', type = int, default = 10)
+def fine_tune(model: str, max_length: int, batch_size: int, seed: int, epochs: int):
     dataset_cache_path = 'assets/_baneks_tf'
+
+    print(f'Fine-tuning model {model}')
 
     # Prepare tokenizer
 
@@ -36,7 +39,7 @@ def fine_tune(model: str, max_length: int, batch_size: int, seed: int):
     # Prepare model
 
     config = AutoConfig.from_pretrained(
-        'gpt2',
+        model,
         vocab_size = len(tokenizer),
         n_ctx = max_length,
         bos_token_id = tokenizer.bos_token_id,
@@ -95,7 +98,7 @@ def fine_tune(model: str, max_length: int, batch_size: int, seed: int):
 
     callback = PushToHubCallback(output_dir = 'fool', tokenizer = tokenizer)
 
-    model.fit(tf_dataset, callbacks = [callback])
+    model.fit(tf_dataset, callbacks = [callback], epochs = epochs)
 
 
 @main.command()
