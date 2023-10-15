@@ -1,11 +1,13 @@
+import os
 from os import environ as env
+import pickle
 
 env['TF_CPP_MIN_LOG_LEVEL'] = '3'  # disable verbose logging from tensorflow
 
 import tensorflow as tf
 
 from click import group, argument, option
-from transformers import pipeline, TFGPT2LMHeadModel, AutoTokenizer
+from transformers import pipeline, TFGPT2LMHeadModel, AutoTokenizer, DataCollatorForLanguageModeling, AutoConfig
 from datasets import load_dataset
 
 
@@ -19,64 +21,108 @@ def main():
 
 @main.command()
 @argument('model', type = str, default = 'gpt2')
-def fine_tune(model: str):
+@option('--max-length', '-l', type = int, default = 1024)
+@option('--batch-size', '-b', type = int, default = 128)
+@option('--seed', '-s', type = int, default = 17)
+def fine_tune(model: str, max_length: int, batch_size: int, seed: int):
+    dataset_cache_path = 'assets/_baneks_tf'
+
+    # Prepare tokenizer
+
     tokenizer = AutoTokenizer.from_pretrained(model)
     tokenizer.pad_token = tokenizer.eos_token
 
-    dataset = load_dataset('zeio/baneks')['train'].select(range(10))
+    # Prepare model
 
-    dataset = dataset.shuffle(seed = 17)
+    config = AutoConfig.from_pretrained(
+        'gpt2',
+        vocab_size = len(tokenizer),
+        n_ctx = max_length,
+        bos_token_id = tokenizer.bos_token_id,
+        eos_token_id = tokenizer.eos_token_id
+    )
+    model = TFGPT2LMHeadModel(config)
 
-    def tokenize(item):
-        # return tokenizer(item['text'], return_tensors='tf', max_length = 1024, truncation = True, padding = True)
-        outputs = tokenizer(
-            item['text'],
-            # return_tensors='tf',
-            max_length = 100,
-            return_overflowing_tokens = True,
-            return_length = True,
-            truncation = True
+    # Prepare dataset
+
+    if not os.path.isfile(dataset_cache_path):
+
+        dataset = load_dataset('zeio/baneks')['train']  # .select(range(10))
+
+        dataset = dataset.shuffle(seed = seed)
+
+        def tokenize(item):
+            # print(item)
+            # return tokenizer(item['text'], return_tensors='tf', max_length = 1024, truncation = True, padding = True)
+            outputs = tokenizer(
+                item['text'],
+                # return_tensors='tf',
+                max_length = max_length,
+                return_overflowing_tokens = True,
+                # return_length = True,
+                # padding = True,
+                truncation = True
+            )
+
+            # print(outputs['length'])
+
+            return {'input_ids': outputs.input_ids}
+            # return outputs
+
+            # print(tokenizer.decode(outputs.input_ids[-1]))
+
+            # print(outputs['overflow_to_sample_mapping'])
+
+            # return outputs
+
+        # dataset.add_column('tokens', tokens)
+
+        # tokens = dataset.map(tokenize, batched = True)
+
+        # outputs = tokenizer(
+        #     dataset[1]['text'],
+        #     truncation = True,
+        #     # return_tensors='tf',
+        #     max_length = 100,
+        #     return_overflowing_tokens = True,
+        #     return_length = True
+        # )
+
+        # print(outputs['length'])
+
+        tokens = dataset.map(tokenize, batched = True, batch_size = batch_size, remove_columns = dataset.column_names)
+
+        # model(model.dummy_inputs)
+        # model.summary()
+
+        data_collator = DataCollatorForLanguageModeling(tokenizer, mlm = False, return_tensors = 'tf')
+
+        # batch = data_collator([tokens[i] for i in range(5)])
+        # for key in batch:
+        #     print(f'{key} shape: {batch[key].shape}')
+
+        tf_train_dataset = model.prepare_tf_dataset(
+            tokens,
+            collate_fn = data_collator,
+            shuffle = True,
+            batch_size = batch_size
         )
 
-        print(outputs['length'])
+        tf_train_dataset.save(dataset_cache_path)
 
-        return outputs
+        # with open(dataset_cache_path, 'wb') as file:
+        #     pickle.dump(tf_train_dataset, file)
 
-    # dataset.add_column('tokens', tokens)
+    else:
+        tf_train_dataset = tf.data.Dataset.load(dataset_cache_path)
 
-    # tokens = dataset.map(tokenize, batched = True)
+        # with open(dataset_cache_path, 'rb') as file:
+        #     tf_train_dataset = pickle.load(file)
 
-    # outputs = tokenizer(
-    #     dataset[1]['text'],
-    #     truncation = True,
-    #     # return_tensors='tf',
-    #     max_length = 100,
-    #     return_overflowing_tokens = True,
-    #     return_length = True
-    # )
+    print(tf_train_dataset)
 
-    # print(outputs['length'])
-
-    tokens = dataset.map(tokenize)
-
-    # outputs = tokenizer(
-    #     dataset[:2]["text"],
-    #     truncation=True,
-    #     max_length=100,
-    #     return_overflowing_tokens=True,
-    #     return_length=True
-    # )
-
-    # print(f"Input IDs length: {len(outputs['input_ids'])}")
-    # print(f"Input chunk lengths: {(outputs['length'])}")
-    # print(f"Chunk mapping: {outputs['overflow_to_sample_mapping']}")
-
-    # tokens.set_format('tf', columns = ('input_ids', 'attention_mask'))
-
-    # tokens.batch(5)
-
-    # for batch in tokens.iter(batch_size = 5):
-    #     print(batch)
+    # model_size = sum(t.numel() for t in model.parameters())
+    # print(f'Model size: {model.num_parameters()/1000**2:.1f}M parameters')
 
     # model = TFGPT2LMHeadModel.from_pretrained(model)
 
