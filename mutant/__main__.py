@@ -1,12 +1,16 @@
 import os
 from os import environ as env
-import pickle
 from shutil import rmtree
 
 from click import group, argument, option
-from transformers import pipeline, TFGPT2LMHeadModel, AutoTokenizer, DataCollatorForLanguageModeling, AutoConfig, \
-    create_optimizer, AutoModelForCausalLM, TFAutoModelForCausalLM, Trainer, TrainingArguments
+
+from transformers import pipeline
+from transformers import AutoTokenizer, DataCollatorForLanguageModeling, create_optimizer
+from transformers import AutoModelForCausalLM, TFAutoModelForCausalLM
+from transformers import Trainer, TrainingArguments
+
 from transformers.keras_callbacks import PushToHubCallback
+
 from datasets import load_dataset
 
 
@@ -21,10 +25,10 @@ def main():
 @main.command()
 @argument('model', type = str)
 @argument('output', type = str)
-@option('--max-length', '-l', type = int, default = 128)
-@option('--batch-size', '-b', type = int, default = 4)
+@option('--max-length', '-l', type = int, default = 1024)
+@option('--batch-size', '-b', type = int, default = 128)
 @option('--seed', '-s', type = int, default = 17)
-@option('--epochs', '-e', type = int, default = 1)
+@option('--epochs', '-e', type = int, default = 10)
 @option('--pytorch', '-t', is_flag = True)
 @option('--cached', '-c', is_flag = True, help = 'use cached dataset')
 def fine_tune(model: str, output: str, max_length: int, batch_size: int, seed: int, epochs: int, pytorch: bool, cached: bool):
@@ -46,28 +50,13 @@ def fine_tune(model: str, output: str, max_length: int, batch_size: int, seed: i
 
     # Prepare model
 
-    # config = AutoConfig.from_pretrained(
-    #     model,
-    #     vocab_size = len(tokenizer),
-    #     n_ctx = max_length,
-    #     bos_token_id = tokenizer.bos_token_id,
-    #     eos_token_id = tokenizer.eos_token_id
-    # )
-
-    # model = AutoModelForCausalLM.from_pretrained(config)
-    # model = TFGPT2LMHeadModel(config)
-
     model = AutoModelForCausalLM.from_pretrained(model) if pytorch else TFAutoModelForCausalLM.from_pretrained(model)
 
-    # -----------------
-
-    # # Prepare dataset
+    # Prepare dataset
 
     dir_exists = os.path.isdir(dataset_cache_path)
 
     if pytorch or not cached or not dir_exists:
-        print('--')
-
         if not pytorch and dir_exists:
             rmtree(dataset_cache_path)
 
@@ -95,15 +84,6 @@ def fine_tune(model: str, output: str, max_length: int, batch_size: int, seed: i
 
         data_collator = DataCollatorForLanguageModeling(tokenizer, mlm = False, return_tensors = 'pt' if pytorch else 'tf')
 
-        # if pytorch:
-        #     os.mkdir(dataset_cache_path)
-
-        #     with open(os.path.join(dataset_cache_path, 'dataset.pkl'), 'wb') as file:
-        #         pickle.dump(tokens, file)
-
-        #     with open(os.path.join(dataset_cache_path, 'collator.pkl'), 'wb') as file:
-        #         pickle.dump(data_collator, file)
-
         if not pytorch:
             tf_dataset = model.prepare_tf_dataset(
                 tokens,
@@ -118,8 +98,6 @@ def fine_tune(model: str, output: str, max_length: int, batch_size: int, seed: i
         tf_dataset = tf.data.Dataset.load(dataset_cache_path)
 
     if pytorch:
-        print('Initializing training arguments...')
-
         args = TrainingArguments(
             output_dir = output,
             per_device_train_batch_size = batch_size,
@@ -134,8 +112,6 @@ def fine_tune(model: str, output: str, max_length: int, batch_size: int, seed: i
             push_to_hub = True
         )
 
-        print('Initializing trainer...')
-
         trainer = Trainer(
             model = model,
             tokenizer = tokenizer,
@@ -144,15 +120,8 @@ def fine_tune(model: str, output: str, max_length: int, batch_size: int, seed: i
             train_dataset = tokens
         )
 
-        print('Training...')
-
         trainer.train()
-
-        print('Pushing to hub...')
-
         trainer.push_to_hub()
-
-        print('Pushed to hub')
     else:
         # print(tf_dataset)
 
