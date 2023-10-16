@@ -1,17 +1,19 @@
 import os
 from os import environ as env
-from shutil import rmtree
+from shutil import rmtree, move
 
 from click import group, argument, option
 
 from transformers import pipeline
-from transformers import AutoTokenizer, DataCollatorForLanguageModeling, create_optimizer
+from transformers import AutoTokenizer, DataCollatorForLanguageModeling, create_optimizer, AutoConfig, TFAutoModel
 from transformers import AutoModelForCausalLM, TFAutoModelForCausalLM
 from transformers import Trainer, TrainingArguments
 
 from transformers.keras_callbacks import PushToHubCallback
 
 from datasets import load_dataset
+
+from .ModelFormat import ModelFormat
 
 
 TOKEN = env['HUGGING_FACE_INFERENCE_API_TOKEN']
@@ -20,6 +22,60 @@ TOKEN = env['HUGGING_FACE_INFERENCE_API_TOKEN']
 @group()
 def main():
     pass
+
+
+TMP_FOLDER = '/tmp'
+
+TF_MODEL_FILENAME = 'tf_model.h5'
+CONFIG_FILENAME = 'config.json'
+
+
+@main.command()
+@argument('source', type = str)
+def check(source: str):
+    match ModelFormat.from_path(source):
+        case ModelFormat.TF:
+            parent_dir = os.path.dirname(source)
+
+            config_path = os.path.join(parent_dir, CONFIG_FILENAME)
+
+            config = AutoConfig.from_pretrained(config_path)
+            model = TFAutoModel.from_pretrained(source, config = config)
+
+            print(model)
+
+        case value:
+            raise ValueError(f'Model format {value} is not supported')
+
+
+@main.command()
+@argument('source', type = str)
+@option('--tensorflow', '-tf', is_flag = True)
+@option('--torch', '-pt', is_flag = True)
+@option('--safetensors', '-st', is_flag = True)
+def convert(source: str, tensorflow: bool, torch: bool, safetensors: bool):
+    assert (
+        tensorflow and not torch and not safetensors or
+        not tensorflow and torch and not safetensors or
+        not tensorflow and not torch and safetensors
+    ), 'Exactly one output format must be chosen for conversion'
+
+    match (ModelFormat.from_path(source), ModelFormat.TF if tensorflow else ModelFormat.PT if torch else ModelFormat.ST):
+        case (ModelFormat.ST, ModelFormat.TF):
+            parent_dir = os.path.dirname(source)
+
+            config_path = os.path.join(parent_dir, CONFIG_FILENAME)
+
+            config = AutoConfig.from_pretrained(config_path)
+            model = TFAutoModel.from_pretrained(source, config = config)
+
+            model.save_pretrained(TMP_FOLDER)
+
+            os.remove(os.path.join(TMP_FOLDER, CONFIG_FILENAME))
+            move(os.path.join(TMP_FOLDER, TF_MODEL_FILENAME), os.path.join(parent_dir, TF_MODEL_FILENAME))
+
+        case (source_format, destination_format):
+            raise ValueError(f'Cannot convert model from {source_format.value} to {destination_format.value}')
 
 
 @main.command()
@@ -109,7 +165,8 @@ def fine_tune(model: str, output: str, max_length: int, batch_size: int, seed: i
             learning_rate = 5e-4,
             save_steps = 3_000,
             fp16 = True,
-            push_to_hub = True
+            push_to_hub = True,
+            save_safetensors = True
         )
 
         trainer = Trainer(
