@@ -26,7 +26,7 @@ def main():
 @argument('model', type = str)
 @argument('output', type = str)
 @option('--max-length', '-l', type = int, default = 1024)
-@option('--batch-size', '-b', type = int, default = 128)
+@option('--batch-size', '-b', type = int, default = 4)
 @option('--seed', '-s', type = int, default = 17)
 @option('--epochs', '-e', type = int, default = 10)
 @option('--pytorch', '-t', is_flag = True)
@@ -107,7 +107,7 @@ def fine_tune(model: str, output: str, max_length: int, batch_size: int, seed: i
             warmup_steps = 1_000,
             lr_scheduler_type = 'cosine',
             learning_rate = 5e-4,
-            save_steps = 5_000,
+            save_steps = 3_000,
             fp16 = True,
             push_to_hub = True
         )
